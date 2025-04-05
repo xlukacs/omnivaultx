@@ -59,6 +59,11 @@ if [ "$refresh" = true ]; then
     docker rm -f dp_all_in_one 2>/dev/null || true
 fi
 
+# stop docker container if it exists
+echo "Stopping docker container if it exists"
+docker stop dp_all_in_one 2>/dev/null || true
+
+
 # pull docker image
 echo "Pulling docker image"
 docker pull madrent/dp_all_in_one:latest
