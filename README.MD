@@ -19,6 +19,8 @@ sudo dpkg -i om_v1_amd64.deb
 ```bash
 sudo mv .env.example .env
 ```
+Open .env and replace the default encryption key with a 32 character long secret.
+
 
 3. Run the app with docker
 ```bash
