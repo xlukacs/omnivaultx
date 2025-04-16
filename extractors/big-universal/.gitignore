@@ -1,0 +1,5 @@
+venv/
+uploads/
+.idea/
+.env
+!.env.example
