@@ -9,11 +9,13 @@ fi
 help_message() {
     echo "Usage: $0 [options]"
     echo "Options:"
-    echo " -r, --refresh    Refresh the docker image"
-    echo " -h, --help       Display this help message"
+    echo " -r, --refresh           Refresh the container image"
+    echo " -e, --engine [engine]   Set container engine (docker or podman, default: docker)"
+    echo " -h, --help              Display this help message"
 }
 
 refresh=false
+CONTAINER_ENGINE="docker"
 
 # Parse command-line options
 while [[ $# -gt 0 ]]; do
@@ -22,6 +24,15 @@ while [[ $# -gt 0 ]]; do
         -r|--refresh)
             refresh=true
             shift
+            ;;
+        -e|--engine)
+            if [[ -n "$2" && ( "$2" == "docker" || "$2" == "podman" ) ]]; then
+                CONTAINER_ENGINE="$2"
+                shift 2
+            else
+                echo "Invalid or missing engine. Use 'docker' or 'podman'."
+                exit 1
+            fi
             ;;
         -h|--help)
             help_message
@@ -36,51 +47,35 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Create host directories if they don't exist
-if [ ! -d "./data/db" ]; then
-    echo "Creating missing ./data/db directory"
-    mkdir -p ./data/db
-fi
-if [ ! -d "./data/fs" ]; then
-    echo "Creating missing ./data/fs directory"
-    mkdir -p ./data/fs
-fi
-if [ ! -d "./data/rabbitmq" ]; then
-    echo "Creating missing ./data/rabbitmq directory"
-    mkdir -p ./data/rabbitmq
-fi
-if [ ! -d "./data/temp" ]; then
-    echo "Creating missing ./data/temp directory"
-    mkdir -p ./data/temp
-fi
+for dir in "./data/db" "./data/fs" "./data/rabbitmq" "./data/temp"; do
+    if [ ! -d "$dir" ]; then
+        echo "Creating missing $dir directory"
+        mkdir -p "$dir"
+    fi
+done
 
 if [ "$refresh" = true ]; then
-    # Remove existing container if it exists
     echo "Removing existing container if it exists"
-    docker rm -f dp_all_in_one 2>/dev/null || true
+    $CONTAINER_ENGINE rm -f dp_all_in_one 2>/dev/null || true
 fi
 
-# stop docker container if it exists
-echo "Stopping docker container if it exists"
-docker stop dp_all_in_one 2>/dev/null || true
+echo "Stopping container if it exists"
+$CONTAINER_ENGINE stop dp_all_in_one 2>/dev/null || true
 
+echo "Pulling container image"
+$CONTAINER_ENGINE pull madrent/dp_all_in_one:latest
 
-# pull docker image
-echo "Pulling docker image"
-docker pull madrent/dp_all_in_one:latest
-
-# run docker container with volume mounts
-echo "Running docker container"
-docker run -d --name dp_all_in_one \
+echo "Running container"
+$CONTAINER_ENGINE run -d --name dp_all_in_one \
     --env-file ./.env \
     -p 80:80 \
-    -v $(pwd)/data/db:/app/backend/database \
-    -v $(pwd)/data/fs:/app/backend/fs \
-    -v $(pwd)/data/rabbitmq:/var/lib/rabbitmq \
-    -v $(pwd)/data/temp:/app/backend/temp \
+    -p 15672:15672 \
+    -p 5672:5672 \
+    -v "$(pwd)/data/db:/app/backend/database" \
+    -v "$(pwd)/data/fs:/app/backend/fs" \
+    -v "$(pwd)/data/rabbitmq:/var/lib/rabbitmq" \
+    -v "$(pwd)/data/temp:/app/backend/temp" \
     madrent/dp_all_in_one:latest
 
-# print logs
 echo "Printing logs"
-docker logs -f dp_all_in_one
-
-
+$CONTAINER_ENGINE logs -f dp_all_in_one
