@@ -22,7 +22,8 @@ sudo systemctl status docker
 # Add user to docker group (optional)
 if ! groups "$USER" | grep -q "docker"; then
   sudo usermod -aG docker "$USER"
-  echo "Please log out and log back in for the group change to take effect."
+  echo "Applying new group membership..."
+  exec newgrp docker
 fi
 
 # Test Docker

@@ -6,6 +6,7 @@ import pika
 from rake_nltk import Rake
 import nltk
 from dotenv import load_dotenv
+import chardet
 
 print(" [x] Downloading nltk parts...")
 nltk.download('stopwords')
@@ -14,10 +15,11 @@ print(" [+] Download done...")
 
 load_dotenv()
 
-RABBITMQ_HOST = os.getenv('RABBIT_HOST', 'localhost')
-RABBITMQ_USER = os.getenv('RABBIT_USER', 'guest')
-RABBITMQ_PASS = os.getenv('RABBIT_PASS', 'guest')
+RABBITMQ_HOST = os.getenv('RABBIT_HOST', '127.0.0.1')
+RABBITMQ_USER = os.getenv('RABBIT_USER', 'om-processor')
+RABBITMQ_PASS = os.getenv('RABBIT_PASS', 'om-processor')
 RABBITMQ_VHOST = os.getenv('RABBIT_VHOST', '/')
+RABBITMQ_PORT = os.getenv('RABBIT_PORT', 5672)
 
 print(f" [+] RabbitMQ Host: {RABBITMQ_HOST}, User: {RABBITMQ_USER}, VHost: {RABBITMQ_VHOST}, Password: ****")
 
@@ -27,19 +29,38 @@ credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
 def extract_tags(content, top_results=5):
     """Extract key phrases from text content using RAKE"""
     r = Rake()
+
+    # Force convert content to string
+    if not isinstance(content, str):
+        content = str(content)
+
+    # Check if content is None or empty
+    if not content or content.strip() == "" or content == "None":
+        return []
+    
     r.extract_keywords_from_text(content)
     ranked_tags = r.get_ranked_phrases()
     return ranked_tags[:top_results]
 
+
 def load_text_file(file_path):
     """Load and read text file content"""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-        return content
-    except Exception as e:
-        print(f"Error reading file: {str(e)}")
-        return None
+    print(f" [+] Loading text file")
+    with open(file_path, 'rb') as f:
+        raw = f.read()
+
+        if not raw:
+            print(" [!] File is empty.")
+            return ""
+        
+        result = chardet.detect(raw)
+        encoding = result['encoding']
+        print(f" [+] Detected encoding: {encoding}")
+        try:
+            return raw.decode(encoding)
+        except Exception as e:
+            print(f"Error decoding file with detected encoding {encoding}: {str(e)}")
+            return None
 
 def dedupe_tags(tags):
     """Remove duplicate tags from the list"""
@@ -52,7 +73,7 @@ def send_message_to_queue(queue_name, message):
             host=RABBITMQ_HOST,
             credentials=credentials,
             virtual_host=RABBITMQ_VHOST,
-            port=5672
+            port=RABBITMQ_PORT
         ))
         channel = connection.channel()
 
@@ -88,6 +109,8 @@ def process_text_file(file_path):
     except Exception as e:
         print(f"Error processing text file: {str(e)}")
         return None
+    
+
 
 def callback(ch, method, properties, body):
     """Callback function for RabbitMQ messages"""
@@ -150,7 +173,7 @@ def start_rabbitmq_consumer():
             connection = pika.BlockingConnection(
                 pika.ConnectionParameters(
                     host=RABBITMQ_HOST,
-                    port=5672,
+                    port=RABBITMQ_PORT,
                     credentials=credentials,
                     virtual_host=RABBITMQ_VHOST,
                     heartbeat=60,
@@ -237,7 +260,7 @@ def register_module(module_id):
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(
                 host=RABBITMQ_HOST,
-                port=5672,
+                port=RABBITMQ_PORT,
                 credentials=credentials,
                 virtual_host=RABBITMQ_VHOST
             )
@@ -280,7 +303,7 @@ def check_module_availability(module_id):
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(
                 host=RABBITMQ_HOST,
-                port=5672,
+                port=RABBITMQ_PORT,
                 credentials=credentials,
                 virtual_host=RABBITMQ_VHOST
             )

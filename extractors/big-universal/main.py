@@ -19,6 +19,7 @@ import librosa
 
 import ssl
 from dotenv import load_dotenv
+import chardet
 
 
 
@@ -29,9 +30,9 @@ print(" [+] Download done...")
 
 load_dotenv()
 
-RABBITMQ_HOST = os.getenv('RABBIT_HOST', 'localhost')
-RABBITMQ_USER = os.getenv('RABBIT_USER', 'dp-processor')
-RABBITMQ_PASS = os.getenv('RABBIT_PASS', 'dp-processor')
+RABBITMQ_HOST = os.getenv('RABBIT_HOST', '127.0.0.1')
+RABBITMQ_USER = os.getenv('RABBIT_USER', 'om-processor')
+RABBITMQ_PASS = os.getenv('RABBIT_PASS', 'om-processor')
 RABBITMQ_VHOST = os.getenv('RABBIT_VHOST', '/')
 RABBITMQ_PORT = os.getenv('RABBIT_PORT', 5672)
 
@@ -199,22 +200,38 @@ def process_pdf(file_path, output_folder='uploads'):
 
     return extracted_text
 
-def extract_tags(content, topResults):
+def extract_tags(content, top_results=5):
+    """Extract key phrases from text content using RAKE"""
     r = Rake()
 
+    # Force convert content to string
+    if not isinstance(content, str):
+        content = str(content)
+
+    # Check if content is None or empty
+    if not content or content.strip() == "" or content == "None":
+        return []
+    
     r.extract_keywords_from_text(content)
-
     ranked_tags = r.get_ranked_phrases()
+    return ranked_tags[:top_results]
 
-    return ranked_tags[:topResults]
 
-def process_text(file_path):
-    text = load_text_file(file_path)
+def process_text_file(file_path):
+    """Process text file and extract metadata"""
+    try:
+        # Load text content
+        content = load_text_file(file_path)
+        if not content:
+            return None
 
-    tags = extract_tags(text, 5)
+        # Extract tags from content
+        tags = extract_tags(content)
 
-    os.remove(file_path)
-    return tags
+        return tags
+    except Exception as e:
+        print(f"Error processing text file: {str(e)}")
+        return None
 
 def save_temp_file(file_name, file_data):
     temp_file_path = os.path.join("uploads", file_name)
@@ -224,13 +241,22 @@ def save_temp_file(file_name, file_data):
     return temp_file_path
 
 def load_text_file(file_path):
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-        return content
-    except Exception as e:
-        print(f"Error reading file: {str(e)}")
-        return None
+    print(f" [+] Loading text file")
+    with open(file_path, 'rb') as f:
+        raw = f.read()
+
+        if not raw:
+            print(" [!] File is empty.")
+            return ""
+        
+        result = chardet.detect(raw)
+        encoding = result['encoding']
+        print(f" [+] Detected encoding: {encoding}")
+        try:
+            return raw.decode(encoding)
+        except Exception as e:
+            print(f"Error decoding file with detected encoding {encoding}: {str(e)}")
+            return None
 
 def dedupe_tags(tags):
     return list(set(tags))
@@ -659,6 +685,8 @@ def callback(ch, method, properties, body):
         file_data = data.get('filedata')  # base64 encoded
         status_id = data.get('status_id')
         is_dynamic = data.get('is_dynamic', False)
+
+        print(f" [+] Received message for resource ID: {status_id}")
         
         if not all([file_name, file_data, status_id]):
             print(" [-] Invalid message format")
@@ -681,19 +709,26 @@ def callback(ch, method, properties, body):
             
         # Process based on file extension
         file_ext = os.path.splitext(local_file_path)[1].lower()
+        print(f" [+] File extension: {file_ext}")
         
         if file_ext in IMAGE_EXTENSIONS:
+            print(f" [+] Processing image")
             result = process_image(local_file_path)
         elif file_ext in AUDIO_EXTENSIONS:
+            print(f" [+] Processing audio")
             result = process_audio(local_file_path)
         elif file_ext in VIDEO_EXTENSIONS:
+            print(f" [+] Processing video")
             result = process_video(local_file_path)
         elif file_ext in PDF_EXTENSIONS:
             if is_dynamic:
+                print(f" [+] Processing dynamic")
                 result = process_dynamic(local_file_path)
             else:
+                print(f" [+] Processing pdf")
                 result = process_pdf(local_file_path)
         elif file_ext in TEXT_EXTENSIONS:
+            print(f" [+] Processing text")
             result = process_text(local_file_path)
         else:
             print(f" [-] Unsupported file type: {file_ext}")
@@ -707,6 +742,8 @@ def callback(ch, method, properties, body):
         # Extract tags from result
         tags = extract_tags(result, 5)
         deduped_tags = dedupe_tags(tags)
+
+        print(f" [+] Extracted tags: {deduped_tags} for resource ID: {status_id}")
         
         # Send results back through RabbitMQ using the expected format
         send_message_to_queue("meta_tags_results", {

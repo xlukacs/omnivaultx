@@ -8,6 +8,16 @@ import torch
 from transformers import BlipProcessor, BlipForConditionalGeneration
 from dotenv import load_dotenv
 
+
+from rake_nltk import Rake
+import nltk
+
+print(" [x] Downloading nltk parts...")
+nltk.download('stopwords')
+nltk.download('punkt_tab')
+print(" [+] Download done...")
+
+
 print(" [x] Loading models...")
 blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
 blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
@@ -15,9 +25,9 @@ print(" [+] Model loading done...")
 
 load_dotenv()
 
-RABBITMQ_HOST = os.getenv('RABBIT_HOST', 'localhost')
-RABBITMQ_USER = os.getenv('RABBIT_USER', 'dp-processor')
-RABBITMQ_PASS = os.getenv('RABBIT_PASS', 'dp-processor')
+RABBITMQ_HOST = os.getenv('RABBIT_HOST', '127.0.0.1')
+RABBITMQ_USER = os.getenv('RABBIT_USER', 'om-processor')
+RABBITMQ_PASS = os.getenv('RABBIT_PASS', 'om-processor')
 RABBITMQ_VHOST = os.getenv('RABBIT_VHOST', '/')
 RABBITMQ_PORT = os.getenv('RABBIT_PORT', 5672)
 
@@ -69,11 +79,25 @@ def send_message_to_queue(queue_name, message):
             connection.close()
             print(" [*] Connection closed after sending the message.")
 
-def dedupe_caption(caption):
-    """Deduplicate caption by removing duplicate words"""
-    words = caption.split()
-    unique_words = list(set(words))
-    return unique_words
+def dedupe_caption(tags):
+    """Remove duplicate tags from the list"""
+    return list(set(tags))
+
+def extract_tags(content, top_results=5):
+    """Extract key phrases from text content using RAKE"""
+    r = Rake()
+
+    # Force convert content to string
+    if not isinstance(content, str):
+        content = str(content)
+
+    # Check if content is None or empty
+    if not content or content.strip() == "" or content == "None":
+        return []
+    
+    r.extract_keywords_from_text(content)
+    ranked_tags = r.get_ranked_phrases()
+    return ranked_tags[:top_results]
 
 def callback(ch, method, properties, body):
     """Callback function for RabbitMQ messages"""
@@ -108,7 +132,8 @@ def callback(ch, method, properties, body):
         ##### CHANGE THIS FUNCTION TO EXTRACT METADATA FROM THE FILE #####
         ##################################################################
         caption = process_image(local_file_path)
-        deduped_caption = dedupe_caption(caption)
+        important_captions = extract_tags(caption)
+        deduped_caption = dedupe_caption(important_captions)
         
         if caption:
             # Send results back through RabbitMQ
